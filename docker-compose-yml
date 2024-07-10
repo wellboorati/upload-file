@@ -7,11 +7,11 @@ services:
       dockerfile: Dockerfile
     container_name: nestjs-app
     environment:
-      - DATABASE_HOST=database
+      - DATABASE_HOST=localhost
       - DATABASE_PORT=5432
       - DATABASE_USER=postgres
       - DATABASE_PASSWORD=postgres
-      - DATABASE_NAME=mydatabase
+      - DATABASE_NAME=postgres
     ports:
       - "3000:3000"
     depends_on:

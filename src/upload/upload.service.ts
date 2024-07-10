@@ -21,14 +21,15 @@ export class UploadService {
     return new Promise((resolve, reject) => {
       const bufferStream = new Stream.PassThrough();
       bufferStream.end(file.buffer);
-      const results = [];
-      let chunk = [];
-      let isProcessing = false;
-      let isFirstChunk = true;
-      const processingPromises = [];
-      let errorOccurred = false;
 
-      const headers = [
+      const processedResults = [];
+      let currentChunk = [];
+      let isProcessing = false;
+      let isFirstLine = true;
+      const chunkProcessingPromises = [];
+      let hasErrorOccurred = false;
+
+      const csvHeaders = [
         'name',
         'governmentId',
         'email',
@@ -36,46 +37,59 @@ export class UploadService {
         'debtDueDate',
         'debtId',
       ];
+
       bufferStream
-        .pipe(csvParser({ headers }))
+        .pipe(csvParser({ headers: csvHeaders }))
         .on('data', (data) => {
-          if (isFirstChunk) {
-            isFirstChunk = false;
+          if (isFirstLine) {
+            isFirstLine = false;
             return;
           }
-          chunk.push(data);
-          if (chunk.length >= this.chunkSize) {
+          currentChunk.push(data);
+
+          if (currentChunk.length >= this.chunkSize) {
             bufferStream.pause();
+
             if (!isProcessing) {
               isProcessing = true;
-              const processingPromise = this.processChunks(chunk, results)
+
+              const processingPromise = this.processChunks(
+                currentChunk,
+                processedResults,
+              )
                 .then(() => {
-                  chunk = [];
+                  currentChunk = [];
                   isProcessing = false;
                   bufferStream.resume();
                 })
                 .catch((error) => {
                   bufferStream.resume();
-                  errorOccurred = true;
+                  hasErrorOccurred = true;
                   reject(`Failed to process chunk: ${error.message}`);
                 });
-              processingPromises.push(processingPromise);
+
+              chunkProcessingPromises.push(processingPromise);
             }
           }
         })
         .on('end', async () => {
-          if (errorOccurred) {
+          if (hasErrorOccurred) {
             return;
           }
-          if (chunk.length > 0) {
-            const processingPromise = this.processChunks(chunk, results);
-            processingPromises.push(processingPromise);
+
+          if (currentChunk.length > 0) {
+            const processingPromise = this.processChunks(
+              currentChunk,
+              processedResults,
+            );
+            chunkProcessingPromises.push(processingPromise);
           }
-          Promise.all(processingPromises)
+
+          Promise.all(chunkProcessingPromises)
             .then(() =>
               resolve({
                 message: 'File processed successfully',
-                data: results,
+                data: processedResults,
               }),
             )
             .catch((error) =>
@@ -106,7 +120,7 @@ export class UploadService {
           console.error(
             `Failed to process chunk after ${this.maxAttempts} attempts.`,
           );
-          throw error; // Throw the error after max attempts
+          throw error;
         }
       }
     }
@@ -123,36 +137,45 @@ export class UploadService {
       debt.debtID = data['debtId'];
       return debt;
     });
+
     const processedDebts = [];
+
     for (const debt of debts) {
       const existingDebt = await this.debtRepository.findOne({
         where: { debtID: debt.debtID },
       });
+
       if (existingDebt) {
         console.log(`Debt with ID ${debt.debtID} has already been processed.`);
         continue;
       }
+
       if (!debt.name || !debt.email || !debt.debtID || !debt.debtAmount) {
         console.error(
           `Invalid data for debt with ID ${debt.debtID}. Skipping...`,
         );
         continue;
       }
+
       if (!isUuid(debt.debtID)) {
         console.error(
           `Invalid UUID format for debt with ID ${debt.debtID}. Skipping...`,
         );
         continue;
       }
+
       const success = await this.processDebt(debt);
       if (success) {
         processedDebts.push(debt);
       }
     }
+
     if (processedDebts.length > 0) {
       await this.retrySave(processedDebts);
     }
+
     return processedDebts;
+
   }
 
   private async retrySave(debts: Debt[], attempt: number = 1): Promise<void> {
@@ -185,6 +208,7 @@ export class UploadService {
         console.error(
           `Attempt ${attempt} to process debt with ID ${debt.debtID} failed: ${error.message}`,
         );
+
         if (attempt === this.maxAttempts) {
           console.error(
             `Failed to process debt with ID ${debt.debtID} after ${this.maxAttempts} attempts.`,
