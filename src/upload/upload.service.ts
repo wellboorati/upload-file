@@ -7,16 +7,20 @@ import { Stream } from 'stream';
 import { EmailService } from '../services/email.service';
 import { BankPaymentService } from '../services/bankPayment.service';
 import { validate as isUuid } from 'uuid';
+
 @Injectable()
 export class UploadService {
   private readonly maxAttempts = 3;
-  private readonly chunkSize = 500;
+  private readonly chunkSize = 1000;
+  private readonly concurrencyLimit = 10; // Adjust as needed
+
   constructor(
     @InjectRepository(Debt)
     private readonly debtRepository: DebtRepository,
     private readonly emailService: EmailService,
     private readonly bankPaymentService: BankPaymentService,
   ) {}
+
   async processFile(file: Express.Multer.File): Promise<any> {
     return new Promise((resolve, reject) => {
       const bufferStream = new Stream.PassThrough();
@@ -24,10 +28,9 @@ export class UploadService {
 
       const processedResults = [];
       let currentChunk = [];
-      let isProcessing = false;
       let isFirstLine = true;
-      const chunkProcessingPromises = [];
-      let hasErrorOccurred = false;
+      const chunkQueue = [];
+      let totalProcessed = 0;
 
       const csvHeaders = [
         'name',
@@ -49,61 +52,73 @@ export class UploadService {
 
           if (currentChunk.length >= this.chunkSize) {
             bufferStream.pause();
+            chunkQueue.push([...currentChunk]);
+            totalProcessed += currentChunk.length;
 
-            if (!isProcessing) {
-              isProcessing = true;
+            currentChunk = [];
 
-              const processingPromise = this.processChunks(
-                currentChunk,
-                processedResults,
-              )
-                .then(() => {
-                  currentChunk = [];
-                  isProcessing = false;
-                  bufferStream.resume();
-                })
-                .catch((error) => {
-                  bufferStream.resume();
-                  hasErrorOccurred = true;
-                  reject(`Failed to process chunk: ${error.message}`);
-                });
-
-              chunkProcessingPromises.push(processingPromise);
-            }
+            this.processChunkQueue(chunkQueue, processedResults, bufferStream)
+              .then(() => {
+                bufferStream.resume();
+              })
+              .catch(reject);
           }
         })
         .on('end', async () => {
-          if (hasErrorOccurred) {
-            return;
-          }
-
           if (currentChunk.length > 0) {
-            const processingPromise = this.processChunks(
-              currentChunk,
-              processedResults,
-            );
-            chunkProcessingPromises.push(processingPromise);
+            chunkQueue.push([...currentChunk]);
+            totalProcessed += currentChunk.length;
           }
 
-          Promise.all(chunkProcessingPromises)
-            .then(() =>
-              resolve({
-                message: 'File processed successfully',
-                data: processedResults,
-              }),
-            )
-            .catch((error) =>
-              reject({
-                message: 'Failed to process file',
-                error: error.message,
-              }),
-            );
+          try {
+            await this.processChunkQueue(chunkQueue, processedResults);
+            resolve({
+              message: 'File processed successfully',
+              data: processedResults,
+              totalProcessed,
+            });
+          } catch (error) {
+            reject({
+              message: 'Failed to process file',
+              error: error.message,
+              totalProcessed,
+            });
+          }
         })
         .on('error', (error) => {
           reject({ message: 'Failed to read file', error: error.message });
           bufferStream.end();
         });
     });
+  }
+
+  private async processChunkQueue(
+    chunkQueue: any[][],
+    results: any[],
+    bufferStream?: any,
+  ): Promise<void> {
+    let activePromises = 0;
+
+    while (chunkQueue.length > 0 && activePromises < this.concurrencyLimit) {
+      const chunk = chunkQueue.shift();
+      if (!chunk) continue;
+
+      activePromises++;
+      this.processChunks(chunk, results)
+        .then(() => {
+          activePromises--;
+          if (bufferStream) bufferStream.resume();
+        })
+        .catch((error) => {
+          activePromises--;
+          if (bufferStream) bufferStream.resume();
+          throw error;
+        });
+
+      if (activePromises >= this.concurrencyLimit && bufferStream) {
+        bufferStream.pause();
+      }
+    }
   }
 
   private async processChunks(chunk: any[], results: any[]): Promise<void> {
@@ -127,45 +142,16 @@ export class UploadService {
   }
 
   private async processChunk(chunk: any[]): Promise<Debt[]> {
-    const debts = chunk.map((data) => {
-      const debt = new Debt();
-      debt.name = data['name'];
-      debt.governmentId = data['governmentId'];
-      debt.email = data['email'];
-      debt.debtAmount = data['debtAmount'];
-      debt.debtDueDate = new Date(data['debtDueDate']);
-      debt.debtID = data['debtId'];
-      return debt;
-    });
-
+    const debts = chunk.map((data) => this.mapToDebtEntity(data));
     const processedDebts = [];
 
     for (const debt of debts) {
-      const existingDebt = await this.debtRepository.findOne({
-        where: { debtID: debt.debtID },
-      });
-
-      if (existingDebt) {
-        console.log(`Debt with ID ${debt.debtID} has already been processed.`);
+      if (await this.shouldSkipDebt(debt)) {
         continue;
       }
 
-      if (!debt.name || !debt.email || !debt.debtID || !debt.debtAmount) {
-        console.error(
-          `Invalid data for debt with ID ${debt.debtID}. Skipping...`,
-        );
-        continue;
-      }
-
-      if (!isUuid(debt.debtID)) {
-        console.error(
-          `Invalid UUID format for debt with ID ${debt.debtID}. Skipping...`,
-        );
-        continue;
-      }
-
-      const success = await this.processDebt(debt);
-      if (success) {
+      const isSuccess = await this.processDebt(debt);
+      if (isSuccess) {
         processedDebts.push(debt);
       }
     }
@@ -175,7 +161,51 @@ export class UploadService {
     }
 
     return processedDebts;
+  }
 
+  private mapToDebtEntity(data: any): Debt {
+    const debt = new Debt();
+    debt.name = data['name'];
+    debt.governmentId = data['governmentId'];
+    debt.email = data['email'];
+    debt.debtAmount = data['debtAmount'];
+    debt.debtDueDate = new Date(data['debtDueDate']);
+    debt.debtID = data['debtId'];
+    return debt;
+  }
+
+  private async shouldSkipDebt(debt: Debt): Promise<boolean> {
+    if (await this.isExistingDebt(debt)) {
+      console.log(`Debt with ID ${debt.debtID} has already been processed.`);
+      return true;
+    }
+
+    if (this.isInvalidDebtData(debt)) {
+      console.error(
+        `Invalid data for debt with ID ${debt.debtID}. Skipping...`,
+      );
+      return true;
+    }
+
+    if (!isUuid(debt.debtID)) {
+      console.error(
+        `Invalid UUID format for debt with ID ${debt.debtID}. Skipping...`,
+      );
+      return true;
+    }
+
+    return false;
+  }
+
+  private async isExistingDebt(debt: Debt): Promise<boolean> {
+    const existingDebt = await this.debtRepository.findOne({
+      where: { debtID: debt.debtID },
+    });
+    return existingDebt !== null;
+  }
+
+  private isInvalidDebtData(debt: Debt): boolean {
+    return !debt.name || !debt.email || !debt.debtID || !debt.debtAmount;
   }
 
   private async retrySave(debts: Debt[], attempt: number = 1): Promise<void> {
