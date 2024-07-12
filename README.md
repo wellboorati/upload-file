@@ -69,29 +69,6 @@ Use the credentials specified in the docker-compose.yml file.
 
 This will run the unit tests using Jest.
 
-## Improvement points
-1. **Error handling**
-  When the request fails, it is just returning the error, even when some requests were successful. As a next step, it will be necessary to differentiate processing that was successful and those that were not and return this information to the user
-
-2. **Retry process**
-  Retry process tries up to 3 times again to process the data and this information, if it fails, needs to be returned to the user
-
-3. **Scalability**
-  Application works well for files with up to 10000 lines to be processed. Above that, it remains unreliable.
-
-
-## Pontos de melhoria
-1. **Tratativa de erros**
-  A requisição ao falhar, está apenas retornando o erro, mesmo quando algumas requisições deram certo. Como próximo passo, será necessário diferenciar processamento que deram certo e os que não deram e retornar essa informação ao usuário
-
-2. **Processo de retentativa**
-  Processo de retentativa tenta até 3 vezes novamente processar os dados e essa informação, não dando certo, precisa ser retornada para o usuário
-
-3. **Escalabilidade**
-  Aplicação funciona bem para arquivos com até 10000 linhas a serem processadas. Acima disso ela não permanece confiável.
-
-
-
 ## Contact
 
 For any questions or inquiries, please contact:
