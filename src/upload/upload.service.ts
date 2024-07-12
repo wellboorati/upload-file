@@ -12,7 +12,7 @@ import { validate as isUuid } from 'uuid';
 export class UploadService {
   private readonly maxAttempts = 3;
   private readonly chunkSize = 1000;
-  private readonly concurrencyLimit = 10; // Adjust as needed
+  private readonly concurrencyLimit = 10;
 
   constructor(
     @InjectRepository(Debt)
@@ -75,7 +75,6 @@ export class UploadService {
             await this.processChunkQueue(chunkQueue, processedResults);
             resolve({
               message: 'File processed successfully',
-              // data: processedResults,
               totalProcessed,
             });
           } catch (error) {
