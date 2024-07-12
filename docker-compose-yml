@@ -6,12 +6,8 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: nestjs-app
-    environment:
-      - DATABASE_HOST=localhost
-      - DATABASE_PORT=5432
-      - DATABASE_USER=postgres
-      - DATABASE_PASSWORD=postgres
-      - DATABASE_NAME=postgres
+    env_file:
+      - .env
     ports:
       - "3000:3000"
     depends_on:
@@ -21,9 +17,9 @@ services:
     image: postgres:13
     container_name: postgres-db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: mydatabase
+      POSTGRES_USER: ${DATABASE_USER}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
+      POSTGRES_DB: ${DATABASE_NAME}
     ports:
       - "5432:5432"
     volumes:
