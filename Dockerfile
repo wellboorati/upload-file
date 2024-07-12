@@ -31,8 +31,8 @@ RUN npm install --only=production
 # Copy the built application from the build stage
 COPY --from=build /app/dist ./dist
 
-# Copy other necessary files (e.g., configurations)
-COPY --from=build /app/.env ./
+# Copy the .env file if it exists
+COPY ./.env ./.env
 
 # Expose the application port (replace with your app's port if different)
 EXPOSE 3000
