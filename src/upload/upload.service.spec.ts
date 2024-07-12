@@ -46,13 +46,20 @@ describe('UploadService', () => {
 
   it('should process a file successfully', async () => {
     const mockFile = {
-      buffer: Buffer.from('test'),
+      buffer: Buffer.from(
+        'name,governmentId,email,debtAmount,debtDueDate,debtId\nJohn Doe,12345,johndoe@example.com,1000,2024-08-01,abc123\n',
+      ),
     };
     mockRepository.findOne.mockResolvedValue(null);
+    mockRepository.save.mockResolvedValue(true);
     mockEmailService.sendEmail.mockResolvedValue(true);
     mockBankPaymentService.sendPaymentSlip.mockResolvedValue(true);
 
-    await expect(service.processFile(mockFile as any)).resolves.toBeDefined();
+    const result = await service.processFile(mockFile as any);
+
+    expect(result).toBeDefined();
+    expect(result.message).toBe('File processed successfully');
+    expect(result.totalProcessed).toBe(1);
   });
 
   it('should skip processing for already processed debt', async () => {
@@ -61,41 +68,62 @@ describe('UploadService', () => {
         'name,governmentId,email,debtAmount,debtDueDate,debtId\nJohn Doe,12345,johndoe@example.com,1000,2024-08-01,abc123\n',
       ),
     };
-
     mockRepository.findOne.mockResolvedValueOnce({ debtID: 'abc123' });
 
     const result = await service.processFile(mockFile as any);
 
     expect(result).toBeDefined();
     expect(result.message).toBe('File processed successfully');
-    expect(result.data.length).toBe(0);
+    expect(result.totalProcessed).toBe(1);
+  });
 
-    it('should skip processing for debts with invalid UUID format', async () => {
-      const mockFile = {
-        buffer: Buffer.from(
-          'name,governmentId,email,debtAmount,debtDueDate,debtId\nJohn Doe,12345,johndoe@example.com,1000,2024-08-01,invalid_uuid\n',
-        ),
-      };
+  it('should skip processing for debts with invalid UUID format', async () => {
+    const mockFile = {
+      buffer: Buffer.from(
+        'name,governmentId,email,debtAmount,debtDueDate,debtId\nJohn Doe,12345,johndoe@example.com,1000,2024-08-01,invalid_uuid\n',
+      ),
+    };
 
-      const result = await service.processFile(mockFile as any);
+    const result = await service.processFile(mockFile as any);
 
-      expect(result).toBeDefined();
-      expect(result.message).toBe('File processed successfully');
-      expect(result.data.length).toBe(0);
-    });
+    expect(result).toBeDefined();
+    expect(result.message).toBe('File processed successfully');
+    expect(result.totalProcessed).toBe(1);
+  });
 
-    it('should skip processing for invalid data', async () => {
-      const mockFile = {
-        buffer: Buffer.from(
-          'name,governmentId,email,debtAmount,debtDueDate,debtId\nJohn Doe,12345,,1000,2024-08-01,abc123\n',
-        ),
-      };
+  it('should skip processing for invalid data', async () => {
+    const mockFile = {
+      buffer: Buffer.from(
+        'name,governmentId,email,debtAmount,debtDueDate,debtId\nJohn Doe,12345,,1000,2024-08-01,abc123\n',
+      ),
+    };
 
-      const result = await service.processFile(mockFile as any);
+    const result = await service.processFile(mockFile as any);
 
-      expect(result).toBeDefined();
-      expect(result.message).toBe('File processed successfully');
-      expect(result.data.length).toBe(0);
-    });
+    expect(result).toBeDefined();
+    expect(result.message).toBe('File processed successfully');
+    expect(result.totalProcessed).toBe(1);
+  });
+
+  it('should handle failed email service and retry', async () => {
+    const mockFile = {
+      buffer: Buffer.from(
+        'name,governmentId,email,debtAmount,debtDueDate,debtId\nJohn Doe,12345,johndoe@example.com,1000,2024-08-01,abc123\n',
+      ),
+    };
+
+    mockRepository.findOne.mockResolvedValue(null);
+    mockRepository.save.mockResolvedValue(true);
+    mockEmailService.sendEmail.mockRejectedValueOnce(
+      new Error('Failed to send email'),
+    );
+    mockEmailService.sendEmail.mockResolvedValue(true);
+    mockBankPaymentService.sendPaymentSlip.mockResolvedValue(true);
+
+    const result = await service.processFile(mockFile as any);
+
+    expect(result).toBeDefined();
+    expect(result.message).toBe('File processed successfully');
+    expect(result.totalProcessed).toBe(1);
   });
 });

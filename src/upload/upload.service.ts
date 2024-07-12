@@ -57,7 +57,8 @@ export class UploadService {
 
             currentChunk = [];
 
-            this.processChunkQueue(chunkQueue, processedResults, bufferStream)
+            this.processChunkQueue(chunkQueue, processedResults)
+
               .then(() => {
                 bufferStream.resume();
               })
@@ -74,7 +75,7 @@ export class UploadService {
             await this.processChunkQueue(chunkQueue, processedResults);
             resolve({
               message: 'File processed successfully',
-              data: processedResults,
+              // data: processedResults,
               totalProcessed,
             });
           } catch (error) {
@@ -95,30 +96,26 @@ export class UploadService {
   private async processChunkQueue(
     chunkQueue: any[][],
     results: any[],
-    bufferStream?: any,
   ): Promise<void> {
-    let activePromises = 0;
+    const activePromises = [];
 
-    while (chunkQueue.length > 0 && activePromises < this.concurrencyLimit) {
+    while (chunkQueue.length > 0) {
       const chunk = chunkQueue.shift();
       if (!chunk) continue;
 
-      activePromises++;
-      this.processChunks(chunk, results)
-        .then(() => {
-          activePromises--;
-          if (bufferStream) bufferStream.resume();
-        })
-        .catch((error) => {
-          activePromises--;
-          if (bufferStream) bufferStream.resume();
-          throw error;
-        });
+      const chunkPromise = this.processChunks(chunk, results).catch((error) => {
+        throw error;
+      });
 
-      if (activePromises >= this.concurrencyLimit && bufferStream) {
-        bufferStream.pause();
+      activePromises.push(chunkPromise);
+
+      if (activePromises.length >= this.concurrencyLimit) {
+        await Promise.all(activePromises);
+        activePromises.length = 0;
       }
     }
+
+    await Promise.all(activePromises);
   }
 
   private async processChunks(chunk: any[], results: any[]): Promise<void> {
