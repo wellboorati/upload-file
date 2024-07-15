@@ -8,6 +8,15 @@ import { EmailService } from '../services/email.service';
 import { BankPaymentService } from '../services/bankPayment.service';
 import { validate as isUuid } from 'uuid';
 
+interface CsvDebt {
+  name: string;
+  governmentId: string;
+  email: string;
+  debtAmount: number;
+  debtDueDate: number;
+  debtId: string;
+}
+
 @Injectable()
 export class UploadService {
   private readonly maxAttempts = 3;
@@ -21,15 +30,17 @@ export class UploadService {
     private readonly bankPaymentService: BankPaymentService,
   ) {}
 
-  async processFile(file: Express.Multer.File): Promise<any> {
+  async processFile(
+    file: Express.Multer.File,
+  ): Promise<{ message: string; totalProcessed: number }> {
     return new Promise((resolve, reject) => {
       const bufferStream = new Stream.PassThrough();
       bufferStream.end(file.buffer);
 
-      const processedResults = [];
-      let currentChunk = [];
+      const processedResults: Debt[] = [];
+      let currentChunk: CsvDebt[] = [];
       let isFirstLine = true;
-      const chunkQueue = [];
+      const chunkQueue: CsvDebt[][] = [];
       let totalProcessed = 0;
 
       const csvHeaders = [
@@ -43,7 +54,7 @@ export class UploadService {
 
       bufferStream
         .pipe(csvParser({ headers: csvHeaders }))
-        .on('data', (data) => {
+        .on('data', (data: CsvDebt) => {
           if (isFirstLine) {
             isFirstLine = false;
             return;
@@ -58,7 +69,6 @@ export class UploadService {
             currentChunk = [];
 
             this.processChunkQueue(chunkQueue, processedResults)
-
               .then(() => {
                 bufferStream.resume();
               })
@@ -85,7 +95,7 @@ export class UploadService {
             });
           }
         })
-        .on('error', (error) => {
+        .on('error', (error: Error) => {
           reject({ message: 'Failed to read file', error: error.message });
           bufferStream.end();
         });
@@ -93,10 +103,10 @@ export class UploadService {
   }
 
   private async processChunkQueue(
-    chunkQueue: any[][],
-    results: any[],
+    chunkQueue: CsvDebt[][],
+    results: Debt[],
   ): Promise<void> {
-    const activePromises = [];
+    const activePromises: Promise<void>[] = [];
 
     while (chunkQueue.length > 0) {
       const chunk = chunkQueue.shift();
@@ -117,7 +127,10 @@ export class UploadService {
     await Promise.all(activePromises);
   }
 
-  private async processChunks(chunk: any[], results: any[]): Promise<void> {
+  private async processChunks(
+    chunk: CsvDebt[],
+    results: Debt[],
+  ): Promise<void> {
     for (let attempt = 1; attempt <= this.maxAttempts; attempt++) {
       try {
         const processedDebts = await this.processChunk(chunk);
@@ -137,9 +150,9 @@ export class UploadService {
     }
   }
 
-  private async processChunk(chunk: any[]): Promise<Debt[]> {
+  private async processChunk(chunk: CsvDebt[]): Promise<Debt[]> {
     const debts = chunk.map((data) => this.mapToDebtEntity(data));
-    const processedDebts = [];
+    const processedDebts: Debt[] = [];
 
     for (const debt of debts) {
       if (await this.shouldSkipDebt(debt)) {
@@ -159,7 +172,7 @@ export class UploadService {
     return processedDebts;
   }
 
-  private mapToDebtEntity(data: any): Debt {
+  private mapToDebtEntity(data: CsvDebt): Debt {
     const debt = new Debt();
     debt.name = data['name'];
     debt.governmentId = data['governmentId'];
